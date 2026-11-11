@@ -43,6 +43,7 @@
   --grid: rgba(255,255,255,.06); color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-ui);
   padding-left: max(16px, env(safe-area-inset-left, 0px));
@@ -311,7 +312,19 @@ canvas { display: block; width: 100%; height: clamp(340px, 64vh, 780px); }
       $('overlay').hidden = true;
       $('startBtn').textContent = 'Stop';
     } catch (e) {
-      err.textContent = 'Microphone not available. Allow mic access for this page, and open it in Chrome, Edge or Firefox.';
+      const name = (e && e.name) || 'Error', msg = (e && e.message) || '';
+      let hint = 'Open the file directly in Chrome, Edge or Firefox and allow the microphone.';
+      if (!navigator.mediaDevices || !window.isSecureContext)
+        hint = 'This page is not running in a secure context, so the browser hides the mic. Open the downloaded file straight from your Downloads folder (address bar should start with file://), or from an https link.';
+      else if (/system/i.test(msg))
+        hint = 'Your operating system is blocking the browser from the mic. Mac: System Settings → Privacy & Security → Microphone → turn on your browser, then restart it. Windows: Settings → Privacy → Microphone → allow desktop apps.';
+      else if (name === 'NotAllowedError')
+        hint = 'Mic access was blocked. Click the mic or lock icon in the address bar, set Microphone to Allow, then reload. If you are viewing this inside another app’s preview, open the file in a normal browser tab instead.';
+      else if (name === 'NotReadableError' || name === 'AbortError')
+        hint = 'The mic is in use by another app (Zoom, Discord, a DAW…) or the driver failed. Close those apps and try again.';
+      else if (name === 'NotFoundError')
+        hint = 'No microphone was found. Plug one in or pick an input device in your system sound settings.';
+      err.textContent = hint + ' [' + name + (msg ? ': ' + msg : '') + ']';
       err.hidden = false; $('overlay').hidden = false;
     }
   }
@@ -478,7 +491,7 @@ canvas { display: block; width: 100%; height: clamp(340px, 64vh, 780px); }
   }
 
   // ---------- main loop ----------
-  let lastReadout = 0;
+  let lastReadout = 0, smooth = null;
   function loop() {
     const now = performance.now();
     if (colorTick-- <= 0) { readColors(); colorTick = 30; }
@@ -490,9 +503,14 @@ canvas { display: block; width: 100%; height: clamp(340px, 64vh, 780px); }
         const raw = 69 + 12 * Math.log2(f / 440);
         recent.push(raw); if (recent.length > 5) recent.shift();
         const s = [...recent].sort((a, b) => a - b); m = s[s.length >> 1];
-        // reject a single octave jump against the median
-        if (Math.abs(raw - m) > 0.6) m = null; else m = raw * 0.5 + m * 0.5;
-      } else recent = [];
+        // reject a single octave jump against the median, then smooth
+        if (Math.abs(raw - m) > 0.6) m = null;
+        else {
+          if (smooth == null || Math.abs(m - smooth) > 0.7) smooth = m;
+          else smooth += (m - smooth) * 0.3;
+          m = smooth;
+        }
+      } else { recent = []; smooth = null; }
       hist.push({ t: now, m });
       const cut = now - 21000; while (hist.length && hist[0].t < cut) hist.shift();
       if (m != null) {
