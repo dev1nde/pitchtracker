@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Key Pitch Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: control strip on top, full-width piano-roll canvas, legend + stats below */
+:root {
+  --bg: #e9edf2;
+  --panel: #ffffff;
+  --ink: #141922;
+  --muted: #5d6675;
+  --line: #d3d9e2;
+  --row-off: #f2f4f7;
+  --row-off-2: #e9ecf1;
+  --row-scale: #e4e0ff;
+  --row-root: #c9c0ff;
+  --accent: #5b47e0;
+  --accent-ink: #ffffff;
+  --good: #1f9d55;
+  --near: #e09a13;
+  --bad: #e0455e;
+  --grid: rgba(20,25,34,.07);
+  --font-ui: "Rubik", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1218; --panel: #171b23; --ink: #eef1f6; --muted: #9099a8; --line: #2a303b;
+    --row-off: #141820; --row-off-2: #11141b; --row-scale: #231f45; --row-root: #352c78;
+    --accent: #8a7bff; --accent-ink: #0f1218; --good: #3ccf7a; --near: #f2b23a; --bad: #ff5f78;
+    --grid: rgba(255,255,255,.06); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1218; --panel: #171b23; --ink: #eef1f6; --muted: #9099a8; --line: #2a303b;
+  --row-off: #141820; --row-off-2: #11141b; --row-scale: #231f45; --row-root: #352c78;
+  --accent: #8a7bff; --accent-ink: #0f1218; --good: #3ccf7a; --near: #f2b23a; --bad: #ff5f78;
+  --grid: rgba(255,255,255,.06); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 32px;
+}
+.wrap { max-width: 1400px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 14px; }
+h1 { font-size: 1.6rem; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+.sub { color: var(--muted); margin: 2px 0 0; }
+.readout {
+  display: flex; align-items: center; gap: 18px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 14px; padding: 10px 18px; min-width: 0;
+}
+.big { font: 700 2.2rem/1 var(--font-mono); min-width: 3.4ch; font-variant-numeric: tabular-nums; }
+.rd-col { display: grid; gap: 2px; font: 500 .85rem/1.3 var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.rd-col b { color: var(--ink); }
+.cents { width: 150px; height: 10px; border-radius: 99px; background: var(--row-off-2); position: relative; overflow: hidden; }
+.cents::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--muted); opacity: .5; }
+.cents i { position: absolute; top: 0; bottom: 0; width: 10px; margin-left: -5px; border-radius: 99px; left: 50%; background: var(--muted); transition: left .06s linear; }
+
+.controls {
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px;
+}
+.ctl { display: grid; gap: 5px; }
+.ctl label, .lbl { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+select, input[type=range] { font: inherit; color: var(--ink); }
+select {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; min-width: 0;
+}
+.seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 2px; }
+.seg button {
+  font: 600 .85rem var(--font-ui); border: 0; background: transparent; color: var(--muted);
+  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.toggle { display: flex; align-items: center; gap: 7px; font-size: .9rem; cursor: pointer; padding-bottom: 7px; }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+input[type=range] { accent-color: var(--accent); width: 140px; }
+.spacer { flex: 1 1 0; }
+.btn {
+  font: 600 1rem var(--font-ui); border: 0; border-radius: 11px; padding: 11px 22px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink);
+}
+.btn.ghost { background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+.btn:focus-visible, select:focus-visible, .seg button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { font: 700 .85rem var(--font-mono); padding: 4px 9px; border-radius: 7px; background: var(--row-scale); color: var(--ink); }
+.chip.root { background: var(--accent); color: var(--accent-ink); }
+
+.stage { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+canvas { display: block; width: 100%; height: clamp(340px, 64vh, 780px); }
+.overlay {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 16px;
+}
+.overlay .card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px 26px;
+  text-align: center; max-width: 440px; box-shadow: 0 10px 40px rgba(0,0,0,.12); display: grid; gap: 10px; justify-items: center;
+}
+.overlay p { margin: 0; color: var(--muted); }
+.overlay .err { color: var(--bad); font-weight: 600; }
+
+.foot { display: flex; flex-wrap: wrap; gap: 10px 26px; align-items: center; color: var(--muted); font-size: .9rem; }
+.key { display: flex; align-items: center; gap: 7px; }
+.sw { width: 22px; height: 0; border-top-style: solid; border-radius: 4px; }
+.box { width: 14px; height: 14px; border-radius: 4px; }
+.stat { font-family: var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) {
+  .big { font-size: 1.7rem; }
+  .cents { width: 100px; }
+  .readout { width: 100%; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) { .cents i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Key Pitch Tracker</h1>
+      <p class="sub">Pick a key, sing, and aim for the highlighted rows.</p>
+    </div>
+    <div class="readout" aria-live="polite">
+      <div class="big" id="rdNote">—</div>
+      <div class="rd-col">
+        <span>target <b id="rdTarget">—</b></span>
+        <span><b id="rdHz">—</b> Hz</span>
+      </div>
+      <div class="rd-col">
+        <span id="rdCents">— ¢</span>
+        <div class="cents"><i id="centsDot"></i></div>
+      </div>
+    </div>
+  </header>
+
+  <section class="controls" aria-label="Settings">
+    <div class="ctl">
+      <label for="root">Key</label>
+      <select id="root"></select>
+    </div>
+    <div class="ctl">
+      <label for="scale">Scale</label>
+      <select id="scale">
+        <option value="major">Major</option>
+        <option value="minor">Natural minor</option>
+        <option value="harmonic">Harmonic minor</option>
+        <option value="melodic">Melodic minor</option>
+        <option value="majpent">Major pentatonic</option>
+        <option value="minpent">Minor pentatonic</option>
+        <option value="blues">Blues</option>
+        <option value="dorian">Dorian</option>
+        <option value="mixolydian">Mixolydian</option>
+        <option value="chromatic">Chromatic (all notes)</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <span class="lbl">Notes in key</span>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="droneBtn" type="button">Play root drone</button>
+    <button class="btn" id="startBtn" type="button">Start</button>
+  </section>
+
+  <section class="controls" aria-label="View">
+    <div class="ctl">
+      <label for="low">Lowest note</label>
+      <select id="low"></select>
+    </div>
+    <div class="ctl">
+      <span class="lbl">Height</span>
+      <div class="seg" id="span">
+        <button type="button" data-v="1" aria-pressed="false">1 oct</button>
+        <button type="button" data-v="2" aria-pressed="true">2 oct</button>
+        <button type="button" data-v="3" aria-pressed="false">3 oct</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label for="win">Time window <span id="winVal">6 s</span></label>
+      <input type="range" id="win" min="2" max="20" step="1" value="6">
+    </div>
+    <label class="toggle"><input type="checkbox" id="follow" checked> Follow my voice</label>
+    <label class="toggle"><input type="checkbox" id="dimOff" checked> Fade notes outside the key</label>
+  </section>
+
+  <div class="stage">
+    <canvas id="cv" aria-label="Pitch graph"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="card">
+        <strong>Press Start and sing a note</strong>
+        <p>Your pitch line appears on the right and scrolls left. Purple rows are the notes of your key; the darkest ones are the root.</p>
+        <p class="err" id="err" hidden></p>
+        <button class="btn" id="startBtn2" type="button">Start</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="key"><span class="sw" style="border-top-width:5px;border-color:var(--good)"></span>On a key note (≤ 12¢)</span>
+    <span class="key"><span class="sw" style="border-top-width:3px;border-color:var(--near)"></span>Close (≤ 25¢)</span>
+    <span class="key"><span class="sw" style="border-top-width:2px;border-color:var(--bad)"></span>Off, or a note outside the key</span>
+    <span class="key"><span class="box" style="background:var(--row-root)"></span>Root</span>
+    <span class="key"><span class="box" style="background:var(--row-scale)"></span>In key</span>
+    <span class="spacer"></span>
+    <span>On target: <span class="stat" id="stat">—</span></span>
+    <button class="btn ghost" id="resetBtn" type="button" style="padding:6px 12px;font-size:.85rem">Reset</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const SHARP = ['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
+  const FLAT  = ['C','D♭','D','E♭','E','F','G♭','G','A♭','A','B♭','B'];
+  const ROOT_LABELS = ['C','C♯ / D♭','D','E♭','E','F','F♯ / G♭','G','A♭','A','B♭','B'];
+  const SCALES = {
+    major:[0,2,4,5,7,9,11], minor:[0,2,3,5,7,8,10], harmonic:[0,2,3,5,7,8,11],
+    melodic:[0,2,3,5,7,9,11], dorian:[0,2,3,5,7,9,10], mixolydian:[0,2,4,5,7,9,10],
+    majpent:[0,2,4,7,9], minpent:[0,3,5,7,10], blues:[0,3,5,6,7,10],
+    chromatic:[0,1,2,3,4,5,6,7,8,9,10,11]
+  };
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('kpt-' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('kpt-' + k, JSON.stringify(v)); } catch {} }
+  };
+
+  // ---------- state ----------
+  const st = {
+    root: store.get('root', 9),          // A
+    scale: store.get('scale', 'minor'),
+    low: store.get('low', 40),           // E2
+    span: store.get('span', 2),
+    win: store.get('win', 6),
+    follow: store.get('follow', true),
+    dimOff: store.get('dimOff', true),
+  };
+  let viewLow = st.low;                  // float, animated when following
+  let scaleSet = new Set();
+  let names = SHARP;
+
+  function useFlats() {
+    const iv = SCALES[st.scale];
+    const minorish = iv.includes(3) && !iv.includes(4);
+    const rel = minorish ? (st.root + 3) % 12 : st.root;
+    return [5,10,3,8,1].includes(rel);
+  }
+  function noteName(m) { return names[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+  function inKey(m) { return scaleSet.has(((m - st.root) % 12 + 12) % 12); }
+  function isRoot(m) { return ((m - st.root) % 12 + 12) % 12 === 0; }
+  function nearestKeyNote(mf) {
+    const r = Math.round(mf); let best = null, bd = 99;
+    for (let m = r - 2; m <= r + 2; m++) if (inKey(m)) { const d = Math.abs(mf - m); if (d < bd) { bd = d; best = m; } }
+    return best ?? r;
+  }
+
+  // ---------- controls ----------
+  const rootSel = $('root'), scaleSel = $('scale'), lowSel = $('low');
+  ROOT_LABELS.forEach((l, i) => rootSel.add(new Option(l, i)));
+  for (let m = 28; m <= 72; m++) lowSel.add(new Option(SHARP[m % 12] + (Math.floor(m/12)-1), m));
+  rootSel.value = st.root; scaleSel.value = st.scale; lowSel.value = st.low;
+  $('win').value = st.win; $('winVal').textContent = st.win + ' s';
+  $('follow').checked = st.follow; $('dimOff').checked = st.dimOff;
+  document.querySelectorAll('#span button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.v === st.span));
+
+  function applyKey() {
+    scaleSet = new Set(SCALES[st.scale]);
+    names = useFlats() ? FLAT : SHARP;
+    const chips = $('chips'); chips.textContent = '';
+    SCALES[st.scale].forEach((iv, i) => {
+      const s = document.createElement('span');
+      s.className = 'chip' + (i === 0 ? ' root' : '');
+      s.textContent = names[(st.root + iv) % 12];
+      chips.appendChild(s);
+    });
+    if (drone) setDroneFreq();
+  }
+  rootSel.onchange = () => { st.root = +rootSel.value; store.set('root', st.root); applyKey(); };
+  scaleSel.onchange = () => { st.scale = scaleSel.value; store.set('scale', st.scale); applyKey(); };
+  lowSel.onchange = () => { st.low = +lowSel.value; viewLow = st.low; store.set('low', st.low); };
+  $('win').oninput = e => { st.win = +e.target.value; $('winVal').textContent = st.win + ' s'; store.set('win', st.win); };
+  $('follow').onchange = e => { st.follow = e.target.checked; store.set('follow', st.follow); if (!st.follow) viewLow = st.low; };
+  $('dimOff').onchange = e => { st.dimOff = e.target.checked; store.set('dimOff', st.dimOff); };
+  document.querySelectorAll('#span button').forEach(b => b.onclick = () => {
+    st.span = +b.dataset.v; store.set('span', st.span);
+    document.querySelectorAll('#span button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  });
+
+  // ---------- audio ----------
+  let ac = null, analyser = null, buf = null, running = false, stream = null;
+  async function ensureCtx() {
+    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === 'suspended') await ac.resume();
+  }
+  async function start() {
+    const err = $('err'); err.hidden = true;
+    try {
+      await ensureCtx();
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      const src = ac.createMediaStreamSource(stream);
+      analyser = ac.createAnalyser(); analyser.fftSize = 2048;
+      src.connect(analyser);
+      buf = new Float32Array(analyser.fftSize);
+      running = true;
+      $('overlay').hidden = true;
+      $('startBtn').textContent = 'Stop';
+    } catch (e) {
+      err.textContent = 'Microphone not available. Allow mic access for this page, and open it in Chrome, Edge or Firefox.';
+      err.hidden = false; $('overlay').hidden = false;
+    }
+  }
+  function stop() {
+    running = false;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; $('startBtn').textContent = 'Start';
+  }
+  $('startBtn').onclick = () => running ? stop() : start();
+  $('startBtn2').onclick = start;
+
+  // Root drone
+  let drone = null;
+  function droneMidi() {
+    const mid = viewLow + st.span * 6;
+    let m = st.root + 12 * Math.round((mid - st.root) / 12);
+    return m;
+  }
+  function setDroneFreq() {
+    const f = 440 * Math.pow(2, (droneMidi() - 69) / 12);
+    drone.osc.frequency.setTargetAtTime(f, ac.currentTime, 0.05);
+    drone.osc2.frequency.setTargetAtTime(f * 1.5, ac.currentTime, 0.05);
+  }
+  $('droneBtn').onclick = async () => {
+    await ensureCtx();
+    if (drone) {
+      drone.g.gain.setTargetAtTime(0, ac.currentTime, 0.08);
+      const d = drone; setTimeout(() => { d.osc.stop(); d.osc2.stop(); }, 400);
+      drone = null; $('droneBtn').textContent = 'Play root drone';
+      return;
+    }
+    const g = ac.createGain(); g.gain.value = 0;
+    const osc = ac.createOscillator(); osc.type = 'triangle';
+    const osc2 = ac.createOscillator(); osc2.type = 'sine';
+    const g2 = ac.createGain(); g2.gain.value = 0.35;
+    osc.connect(g); osc2.connect(g2).connect(g); g.connect(ac.destination);
+    drone = { g, osc, osc2 }; setDroneFreq();
+    osc.start(); osc2.start();
+    g.gain.setTargetAtTime(0.07, ac.currentTime, 0.1);
+    $('droneBtn').textContent = 'Stop drone';
+  };
+
+  // YIN pitch detection
+  function detect(x, sr) {
+    let rms = 0; for (let i = 0; i < x.length; i++) rms += x[i] * x[i];
+    rms = Math.sqrt(rms / x.length);
+    if (rms < 0.012) return { f: null, rms };
+    const W = x.length >> 1;
+    const tMin = Math.floor(sr / 1100), tMax = Math.min(W - 1, Math.ceil(sr / 60));
+    const d = new Float32Array(tMax + 2);
+    for (let t = 1; t <= tMax + 1; t++) {
+      let s = 0; for (let i = 0; i < W; i++) { const v = x[i] - x[i + t]; s += v * v; } d[t] = s;
+    }
+    let run = 0; d[0] = 1;
+    for (let t = 1; t <= tMax + 1; t++) { run += d[t]; d[t] = d[t] * t / (run || 1); }
+    let tau = -1;
+    for (let t = tMin; t <= tMax; t++) {
+      if (d[t] < 0.15) { while (t + 1 <= tMax && d[t + 1] < d[t]) t++; tau = t; break; }
+    }
+    if (tau < 0) return { f: null, rms };
+    const a = d[tau - 1], b = d[tau], c = d[tau + 1];
+    const den = a + c - 2 * b; const shift = den ? (a - c) / (2 * den) : 0;
+    return { f: sr / (tau + shift), rms };
+  }
+
+  // ---------- history & stats ----------
+  let hist = [];           // {t, m}  m = float midi or null
+  let recent = [];
+  let statHit = 0, statAll = 0;
+  $('resetBtn').onclick = () => { hist = []; statHit = statAll = 0; $('stat').textContent = '—'; };
+
+  function devInfo(m) {
+    const target = st.scale === 'chromatic' ? Math.round(m) : nearestKeyNote(m);
+    const cents = (m - target) * 100;
+    const nearestSemi = Math.round(m);
+    const ok = Math.abs(cents) <= 12, near = Math.abs(cents) <= 25;
+    return { target, cents, nearestSemi, cls: ok ? 'good' : near ? 'near' : 'bad' };
+  }
+
+  // ---------- drawing ----------
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  let colors = {}, colorTick = 0;
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    ['panel','ink','muted','line','row-off','row-off-2','row-scale','row-root','accent','good','near','bad','grid']
+      .forEach(k => colors[k] = cs.getPropertyValue('--' + k).trim());
+  }
+  function resize() {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+
+  function draw(now) {
+    const W = cv.clientWidth, H = cv.clientHeight;
+    const gut = 56, plotW = W - gut - 14;
+    const n = st.span * 12 + 1;
+    const rowH = H / n;
+    const yOf = m => H - (m - viewLow + 0.5) * rowH;
+    const xOf = t => gut + plotW - (now - t) / (st.win * 1000) * plotW;
+
+    ctx.clearRect(0, 0, W, H);
+    // rows
+    const mLo = Math.floor(viewLow) - 1, mHi = Math.ceil(viewLow + n) + 1;
+    ctx.font = `600 ${Math.max(10, Math.min(14, rowH * 0.62))}px ${getComputedStyle(document.body).getPropertyValue('--font-mono') || 'monospace'}`;
+    ctx.textBaseline = 'middle';
+    for (let m = mLo; m <= mHi; m++) {
+      const y = yOf(m) - rowH / 2;
+      const k = inKey(m), r = isRoot(m);
+      ctx.fillStyle = r ? colors['row-root'] : k ? colors['row-scale'] : (m % 2 ? colors['row-off'] : colors['row-off-2']);
+      ctx.fillRect(0, y, W, rowH);
+      ctx.fillStyle = colors.line; ctx.fillRect(0, y, W, 1);
+      if (rowH >= 9) {
+        ctx.globalAlpha = k ? 1 : (st.dimOff ? 0.35 : 0.8);
+        ctx.fillStyle = r ? colors.accent : colors.ink;
+        ctx.fillText(noteName(m), 10, y + rowH / 2);
+        ctx.globalAlpha = 1;
+      }
+    }
+    // time grid (1 s)
+    ctx.fillStyle = colors.grid;
+    const first = Math.ceil((now - st.win * 1000) / 1000) * 1000;
+    for (let t = first; t <= now; t += 1000) ctx.fillRect(xOf(t), 0, 1, H);
+    ctx.fillStyle = colors.line; ctx.fillRect(gut - 1, 0, 1, H);
+
+    // pitch line
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let i = 1; i < hist.length; i++) {
+      const a = hist[i - 1], b = hist[i];
+      if (a.m == null || b.m == null) continue;
+      if (b.t - a.t > 150 || Math.abs(b.m - a.m) > 2.5) continue;
+      const info = devInfo(b.m);
+      ctx.strokeStyle = colors[info.cls];
+      ctx.lineWidth = info.cls === 'good' ? 5 : info.cls === 'near' ? 3.2 : 2;
+      ctx.beginPath(); ctx.moveTo(xOf(a.t), yOf(a.m)); ctx.lineTo(xOf(b.t), yOf(b.m)); ctx.stroke();
+    }
+    const last = hist[hist.length - 1];
+    if (last && last.m != null && now - last.t < 200) {
+      const info = devInfo(last.m);
+      ctx.fillStyle = colors[info.cls];
+      ctx.beginPath(); ctx.arc(xOf(last.t), yOf(last.m), 7, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = colors.panel; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+
+  function updateReadout(m, f) {
+    const dot = $('centsDot');
+    if (m == null) {
+      $('rdNote').textContent = '—'; $('rdHz').textContent = '—'; $('rdTarget').textContent = '—';
+      $('rdCents').textContent = '— ¢'; dot.style.background = colors.muted; dot.style.left = '50%';
+      $('rdNote').style.color = '';
+      return;
+    }
+    const info = devInfo(m);
+    $('rdNote').textContent = noteName(info.nearestSemi);
+    $('rdNote').style.color = inKey(info.nearestSemi) ? '' : colors.bad;
+    $('rdTarget').textContent = noteName(info.target);
+    $('rdHz').textContent = f.toFixed(1);
+    const c = Math.round(info.cents);
+    $('rdCents').textContent = (c > 0 ? '+' : '') + c + ' ¢';
+    dot.style.background = colors[info.cls];
+    dot.style.left = (50 + Math.max(-50, Math.min(50, info.cents))) + '%';
+  }
+
+  // ---------- main loop ----------
+  let lastReadout = 0;
+  function loop() {
+    const now = performance.now();
+    if (colorTick-- <= 0) { readColors(); colorTick = 30; }
+    if (running && analyser) {
+      analyser.getFloatTimeDomainData(buf);
+      const { f } = detect(buf, ac.sampleRate);
+      let m = null;
+      if (f && f > 55 && f < 1200) {
+        const raw = 69 + 12 * Math.log2(f / 440);
+        recent.push(raw); if (recent.length > 5) recent.shift();
+        const s = [...recent].sort((a, b) => a - b); m = s[s.length >> 1];
+        // reject a single octave jump against the median
+        if (Math.abs(raw - m) > 0.6) m = null; else m = raw * 0.5 + m * 0.5;
+      } else recent = [];
+      hist.push({ t: now, m });
+      const cut = now - 21000; while (hist.length && hist[0].t < cut) hist.shift();
+      if (m != null) {
+        statAll++; if (devInfo(m).cls !== 'bad') statHit++;
+        if (st.follow) {
+          const n = st.span * 12;
+          if (m < viewLow + 2 || m > viewLow + n - 2) {
+            const goal = Math.round(m - n / 2);
+            viewLow += (goal - viewLow) * 0.08;
+          }
+        }
+      }
+      if (now - lastReadout > 70) {
+        updateReadout(m, f); lastReadout = now;
+        if (statAll > 20) $('stat').textContent = Math.round(100 * statHit / statAll) + '%';
+      }
+      if (drone && st.follow) setDroneFreq();
+    }
+    if (!st.follow) viewLow += (st.low - viewLow) * 0.2;
+    draw(now);
+    requestAnimationFrame(loop);
+  }
+
+  readColors(); resize(); applyKey();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
